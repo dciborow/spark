@@ -1,20 +1,37 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License. See LICENSE in project root for information.
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package org.apache.spark.ml.linalg.distributed
 
 import java.{util => ju}
 
-import breeze.linalg.{DenseMatrix => BDM, DenseVector => BDV, SparseVector => BSV}
-import com.microsoft.ml.spark.RecommendationTestBase
-import org.apache.spark.SparkException
-import org.apache.spark.ml.linalg.{DenseMatrix, Matrices, Matrix, SparseMatrix}
-
 import scala.collection.immutable
+import breeze.linalg.{DenseMatrix => BDM, DenseVector => BDV, SparseVector => BSV}
+import org.apache.spark.{SparkException, SparkFunSuite}
+import org.apache.spark.ml.linalg.{DenseMatrix, Matrices, Matrix, SparseMatrix}
+import org.apache.spark.mllib.util.MLlibTestSparkContext
+import org.apache.spark.mllib.util.TestingUtils._
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.internal.StaticSQLConf
 
-class BlockMatrixSuite extends RecommendationTestBase {
 
-  import session.implicits._
+class BlockMatrixSuite extends SparkFunSuite with MLlibTestSparkContext {
+
+//  import spark.implicits._
 
   val m = 5L
   val n = 4L
@@ -31,9 +48,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
       ((1, 0), new DenseMatrix(2, 2, Array(3.0, 0.0, 1.0, 1.0))),
       ((1, 1), new DenseMatrix(2, 2, Array(1.0, 2.0, 0.0, 1.0))),
       ((2, 1), new DenseMatrix(1, 2, Array(1.0, 5.0))))
-
-    import session.implicits._
-    gridBasedMat = new BlockMatrix(session.createDataset(blocks).repartition(numPartitions), rowPerPart, colPerPart)
+    gridBasedMat = new BlockMatrix(spark.createDataset(blocks).repartition(numPartitions), rowPerPart, colPerPart)
     ()
   }
 
@@ -142,6 +157,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
       ((0, 0), matDense),
       ((1, 0), matSparse))
 
+    val session = SparkSession.builder.getOrCreate()
     import session.implicits._
     val rdd = sc.parallelize(vectors)
     val B = new BlockMatrix(rdd.toDS(), rows, cols)
@@ -180,7 +196,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
       ((1, 1), new DenseMatrix(2, 2, Array(1.0, 2.0, 0.0, 1.0))),
       ((2, 0), new DenseMatrix(1, 2, Array(1.0, 0.0))), // Added block that doesn't exist in A
       ((2, 1), new DenseMatrix(1, 2, Array(1.0, 5.0))))
-    val ds = session.createDataset(blocks).repartition(numPartitions)
+    val ds = spark.createDataset(blocks).repartition(numPartitions)
     val B = new BlockMatrix(ds, rowPerPart, colPerPart)
 
     val expected = BDM(
@@ -203,20 +219,21 @@ class BlockMatrixSuite extends RecommendationTestBase {
       ((0, 0), new DenseMatrix(4, 4, new Array[Double](16))),
       ((1, 0), new DenseMatrix(1, 4, Array(1.0, 0.0, 1.0, 5.0))))
 
-    val C2 = new BlockMatrix(session.createDataset(largerBlocks).repartition(numPartitions), 4, 4, m.toLong, n.toLong)
+    val C2 = new BlockMatrix(spark.createDataset(largerBlocks).repartition(numPartitions), 4, 4, m.toLong, n.toLong)
     intercept[SparkException] { // partitioning doesn't match
       gridBasedMat.add(C2)
     }
     // adding BlockMatrices composed of SparseMatrices
     val sparseBlocks: Seq[((Int, Int), Matrix)] = for (i <- 0 until 4) yield ((i / 2, i % 2), SparseMatrix.speye(4))
     val denseBlocks: Seq[((Int, Int), Matrix)] = for (i <- 0 until 4) yield ((i / 2, i % 2), DenseMatrix.eye(4))
-    val sparseBM = new BlockMatrix(session.createDataset(sparseBlocks).repartition(4), 4, 4, 8, 8)
-    val denseBM = new BlockMatrix(session.createDataset(denseBlocks).repartition(4), 4, 4, 8, 8)
+    val sparseBM = new BlockMatrix(spark.createDataset(sparseBlocks).repartition(4), 4, 4, 8, 8)
+    val denseBM = new BlockMatrix(spark.createDataset(denseBlocks).repartition(4), 4, 4, 8, 8)
 
     assert(sparseBM.add(sparseBM).toBreeze() === sparseBM.add(denseBM).toBreeze())
   }
 
   test("subtract") {
+    val session = SparkSession.builder.getOrCreate()
     import session.implicits._
 
     val blocks: Seq[((Int, Int), Matrix)] = Seq(
@@ -277,6 +294,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
     val blocks: Seq[((Int, Int), Matrix)] = Seq(
       ((0, 0), new DenseMatrix(2, 2, Array(1.0, 0.0, 0.0, 1.0))),
       ((1, 1), new DenseMatrix(2, 2, Array(1.0, 0.0, 0.0, 1.0))))
+    val session = SparkSession.builder.getOrCreate()
     import session.implicits._
     val rdd = sc.parallelize(blocks, 2).toDS()
     val B = new BlockMatrix(rdd, colPerPart, rowPerPart)
@@ -287,19 +305,19 @@ class BlockMatrixSuite extends RecommendationTestBase {
       (0.0, 1.0, 2.0, 1.0),
       (0.0, 0.0, 1.0, 5.0))
 
-    val AtimesB = gridBasedMat.multiply(B, rdd = false)
+    val AtimesB = gridBasedMat.multiply(B)
     assert(AtimesB.numRows() === m)
     assert(AtimesB.numCols() === n)
     assert(AtimesB.toBreeze() === expected)
     val C = new BlockMatrix(rdd, rowPerPart, colPerPart, m + 1, n) // dimensions don't match
     intercept[IllegalArgumentException] {
-      gridBasedMat.multiply(C, rdd = false)
+      gridBasedMat.multiply(C)
     }
     val largerBlocks: Seq[((Int, Int), Matrix)] = Seq(((0, 0), DenseMatrix.eye(4)))
     val C2 = new BlockMatrix(sc.parallelize(largerBlocks, numPartitions).toDS(), 4, 4)
     intercept[SparkException] {
       // partitioning doesn't match
-      gridBasedMat.multiply(C2, rdd = false)
+      gridBasedMat.multiply(C2)
     }
     val rand = new ju.Random(42)
     val largerAblocks: immutable.Seq[((Int, Int), Matrix)] = for (i <- 0 until 20) yield ((i % 5, i / 5), DenseMatrix
@@ -323,6 +341,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
     val blocks: Seq[((Int, Int), Matrix)] = Seq(
       ((0, 0), new DenseMatrix(2, 2, Array(1.0, 0.0, 0.0, 1.0))),
       ((1, 1), new DenseMatrix(2, 2, Array(1.0, 0.0, 0.0, 1.0))))
+    val session = SparkSession.builder.getOrCreate()
     import session.implicits._
 
     val rdd = sc.parallelize(blocks, 2).toDS()
@@ -349,6 +368,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
       ((1, 0), new DenseMatrix(2, 2, Array(3.0, 0.0, 1.0, 1.0))),
       ((1, 1), new DenseMatrix(2, 2, Array(1.0, 2.0, 0.0, 1.0))),
       ((2, 1), new DenseMatrix(1, 2, Array(1.0, 5.0))))
+    val session = SparkSession.builder.getOrCreate()
     import session.implicits._
     val rdd = sc.parallelize(blocks, numPartitions).toDS()
 
@@ -376,7 +396,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
       ((1, 1), new DenseMatrix(2, 2, Array(3.0, 0.0, 1.0, 1.0))),
       ((1, 1), new DenseMatrix(2, 2, Array(1.0, 2.0, 0.0, 1.0))),
       ((2, 1), new DenseMatrix(1, 2, Array(1.0, 5.0))))
-    import session.implicits._
+
     val dupMatrix = new BlockMatrix(sc.parallelize(duplicateBlocks, numPartitions).toDS(), 2, 2)
     intercept[SparkException] {
       dupMatrix.validate()
@@ -403,5 +423,4 @@ class BlockMatrixSuite extends RecommendationTestBase {
     val A = AT2.transpose
     assert(A.toBreeze() === gridBasedMat.toBreeze())
   }
-
 }
