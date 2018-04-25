@@ -4,13 +4,12 @@
 package org.apache.spark.ml.linalg.distributed
 
 import breeze.linalg.{DenseMatrix => BDM, DenseVector => BDV, SparseVector => BSV}
-import org.apache.spark.{ml, mllib}
-import org.apache.spark.ml.linalg.{DenseMatrix, DenseVector, SparseMatrix, SparseVector, Vectors => V}
-import org.apache.spark.ml.linalg.Matrix
+import org.apache.spark.ml.linalg.{Matrix, SparseMatrix, Vectors => V}
 import org.apache.spark.mllib.linalg.distributed.{MatrixEntry, CoordinateMatrix => CM}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.functions.{col, collect_list, udf}
-import org.apache.spark.sql.{DataFrame, Dataset, Row}
+import org.apache.spark.sql.{DataFrame, Dataset, KeyValueGroupedDataset, Row}
+import org.apache.spark.{ml, mllib}
 
 import scala.collection.mutable
 import scala.language.implicitConversions
@@ -47,16 +46,21 @@ import scala.language.implicitConversions
   */
 class CoordinateMatrix(val entries: Dataset[MatrixEntry],
                        private var nRows: Long,
-                       private var nCols: Long) extends DistributedMatrix with MLLib{
+                       private var nCols: Long) extends DistributedMatrix with MLLib {
+
   /**
     * Converts to BlockMatrix. Creates blocks with size 1024 x 1024.
     */
-  def toBlockMatrix(): BlockMatrix = {
-    toBlockMatrix(1024, 1024)
+  def toBlockMatrix(rdd: Boolean = true): BlockMatrix = {
+    if (rdd)
+      toBlockMatrix(1024, 1024)
+    else
+      toBlockMatrixDS(1024, 1024)
   }
 
   /**
     * Converts to BlockMatrix. Blocks may be sparse or dense depending on the sparsity of the rows.
+    *
     * @param rowsPerBlock The number of rows of each block. The blocks at the bottom edge may have
     *                     a smaller value. Must be an integer value greater than 0.
     * @param colsPerBlock The number of columns of each block. The blocks at the right edge may have
@@ -68,6 +72,7 @@ class CoordinateMatrix(val entries: Dataset[MatrixEntry],
       s"rowsPerBlock needs to be greater than 0. rowsPerBlock: $rowsPerBlock")
     require(colsPerBlock > 0,
       s"colsPerBlock needs to be greater than 0. colsPerBlock: $colsPerBlock")
+    import entries.sparkSession.implicits._
     val m = numRows()
     val n = numCols()
 
@@ -94,8 +99,49 @@ class CoordinateMatrix(val entries: Dataset[MatrixEntry],
       val effCols = math.min(n - blockColIndex.toLong * colsPerBlock, colsPerBlock.toLong).toInt
       ((blockRowIndex, blockColIndex), SparseMatrix.fromCOO(effRows, effCols, entry))
     }
-    import entries.sparkSession.implicits._
+
     new BlockMatrix(blocks.toDS(), rowsPerBlock, colsPerBlock, m, n)
+  }
+
+  def toBlockMatrixDS(rowsPerBlock: Int, colsPerBlock: Int): BlockMatrix = {
+    require(rowsPerBlock > 0,
+      s"rowsPerBlock needs to be greater than 0. rowsPerBlock: $rowsPerBlock")
+    require(colsPerBlock > 0,
+      s"colsPerBlock needs to be greater than 0. colsPerBlock: $colsPerBlock")
+    import entries.sparkSession.implicits._
+    val m = numRows()
+    val n = numCols()
+
+    // Since block matrices require an integer row and col index
+    require(math.ceil(m.toDouble / rowsPerBlock) <= Int.MaxValue,
+      "Number of rows divided by rowsPerBlock cannot exceed maximum integer.")
+    require(math.ceil(n.toDouble / colsPerBlock) <= Int.MaxValue,
+      "Number of cols divided by colsPerBlock cannot exceed maximum integer.")
+
+    val numRowBlocks = math.ceil(m.toDouble / rowsPerBlock).toInt
+    val numColBlocks = math.ceil(n.toDouble / colsPerBlock).toInt
+    val partitioner = GridPartitioner(numRowBlocks, numColBlocks, entries.rdd.partitions.length)
+
+    val blocks: Dataset[((Int, Int), Matrix)] = entries.map { entry =>
+      val blockRowIndex = (entry.i / rowsPerBlock).toInt
+      val blockColIndex = (entry.j / colsPerBlock).toInt
+
+      val rowId = entry.i % rowsPerBlock
+      val colId = entry.j % colsPerBlock
+
+      ((blockRowIndex, blockColIndex), (rowId.toInt, colId.toInt, entry.value))
+    }.groupBy(col("_1")).agg(collect_list(col("_2")))
+      .map(r => {
+        val blockRowIndex = r.getAs[Row](0).getInt(0)
+        val blockColIndex = r.getAs[Row](0).getInt(1)
+        val entry = r.getAs[mutable.WrappedArray[Row]](1)
+          .map(r => (r.getInt(0), r.getInt(1), r.getDouble(2)))
+        val effRows = math.min(m - blockRowIndex.toLong * rowsPerBlock, rowsPerBlock.toLong).toInt
+        val effCols = math.min(n - blockColIndex.toLong * colsPerBlock, colsPerBlock.toLong).toInt
+        ((blockRowIndex, blockColIndex), SparseMatrix.fromCOO(effRows, effCols, entry))
+      })
+
+    new BlockMatrix(blocks, rowsPerBlock, colsPerBlock, m, n)
   }
 
   private[ml] def toBreeze(): BDM[Double] = {
@@ -144,7 +190,7 @@ class CoordinateMatrix(val entries: Dataset[MatrixEntry],
     */
   def transpose(): CoordinateMatrix = {
     import entries.sparkSession.implicits._
-    new CoordinateMatrix(entries.map(x => MatrixEntry(x.j, x.i, x.value)))
+    new CoordinateMatrix(entries.map(x => MatrixEntry(x.j, x.i, x.value)), nCols, nRows)
   }
 
   /**
@@ -176,8 +222,9 @@ class CoordinateMatrix(val entries: Dataset[MatrixEntry],
   private def computeSize(): Unit = {
     // There may be empty columns at the very right and empty rows at the very bottom.
     import entries.sparkSession.implicits._
-    val m1 = entries.map(d => (d.i)).groupBy().max("value").collect()(0).getLong(0)
-    val n1 = entries.map(d => (d.j)).groupBy().max("value").collect()(0).getLong(0)
+    val (m1, n1) = entries
+      .map(entry => (entry.i, entry.j))
+      .reduce((l1, l2) => (math.max(l1._1, l2._1), math.max(l1._2, l2._2)))
 
     nRows = math.max(nRows, m1 + 1L)
     nCols = math.max(nCols, n1 + 1L)
@@ -204,8 +251,8 @@ class CoordinateMatrix(val entries: Dataset[MatrixEntry],
   /**
     * Multiplication of two dataset based matrices
     *
-    * @param leftMatrix the rigth matrix in the multiplcation
-    * @param rightMatrix  the left matrxi in the multiplication
+    * @param leftMatrix  the rigth matrix in the multiplcation
+    * @param rightMatrix the left matrxi in the multiplication
     * @return
     */
   private[linalg] def multiply(leftMatrix: CoordinateMatrix, rightMatrix: CoordinateMatrix)
@@ -231,7 +278,13 @@ class CoordinateMatrix(val entries: Dataset[MatrixEntry],
       leftMatrix.vectorizeRows("i", "iVec")
         .crossJoin(leftMatrixVectors)
         .withColumn("product", dot(col("iVec"), col("jVec")))
-        .map(row => MatrixEntry(row.getAs[Long]("i"), row.getAs[Long]("j"), row.getAs[Double]("product")))
+        .mapPartitions((row: Iterator[Row]) =>
+          row.map(row =>
+            MatrixEntry(
+              row.getAs[Long]("i"),
+              row.getAs[Long]("j"),
+              row.getAs[Double]("product"))))
+      //        .map(row => MatrixEntry(row.getAs[Long]("i"), row.getAs[Long]("j"), row.getAs[Double]("product")))
     )
   }
 
@@ -281,7 +334,8 @@ private[distributed] trait MLLib {
     * @param colsPerBlock number of items to be placed in each column block
     * @return
     */
-  private[distributed] def toMLLibBlockMatrix(rowsPerBlock: Int, colsPerBlock: Int): mllib.linalg.distributed.BlockMatrix = {
+  private[distributed] def toMLLibBlockMatrix(rowsPerBlock: Int, colsPerBlock: Int): mllib.linalg.distributed
+  .BlockMatrix = {
     toMLLib.toBlockMatrix(rowsPerBlock, colsPerBlock)
   }
 

@@ -5,12 +5,9 @@ package org.apache.spark.ml.linalg.distributed
 
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV}
 import org.apache.spark.ml.linalg.{Vectors => V}
-import org.apache.spark.mllib.linalg.Matrix
 import org.apache.spark.mllib.linalg.distributed.{MatrixEntry, CoordinateMatrix => CM}
-import org.apache.spark.sql.functions.{col, udf}
-import org.apache.spark.sql.{DataFrame, Dataset, Row}
+import org.apache.spark.sql.Dataset
 
-import scala.collection.mutable
 import scala.language.implicitConversions
 
 /**

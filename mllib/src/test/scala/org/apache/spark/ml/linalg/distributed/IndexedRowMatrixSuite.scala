@@ -8,7 +8,7 @@ import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.sql.Dataset
 import breeze.linalg.{diag => brzDiag, DenseMatrix => BDM, DenseVector => BDV}
 
-class IndexedRowMatrixSuite extends RecommendationTestBase{
+class IndexedRowMatrixSuite extends RecommendationTestBase {
 
   val m = 4
   val n = 3
@@ -19,7 +19,7 @@ class IndexedRowMatrixSuite extends RecommendationTestBase{
   ).map(x => IndexedRow(x._1, x._2))
   var indexedRows: Dataset[IndexedRow] = _
 
-  override def beforeAll() {
+  override def beforeAll(): Unit = {
     super.beforeAll()
     import session.implicits._
     indexedRows = session.createDataset(data)

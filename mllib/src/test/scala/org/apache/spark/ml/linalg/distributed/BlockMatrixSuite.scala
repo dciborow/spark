@@ -13,6 +13,7 @@ import org.apache.spark.ml.linalg.{DenseMatrix, Matrices, Matrix, SparseMatrix}
 import scala.collection.immutable
 
 class BlockMatrixSuite extends RecommendationTestBase {
+
   import session.implicits._
 
   val m = 5L
@@ -22,7 +23,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
   val numPartitions = 3
   var gridBasedMat: BlockMatrix = _
 
-  override def beforeAll() {
+  override def beforeAll(): Unit = {
     super.beforeAll()
     val blocks: Seq[((Int, Int), Matrix)] = Seq(
       ((0, 0), new DenseMatrix(2, 2, Array(1.0, 0.0, 0.0, 2.0))),
@@ -33,6 +34,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
 
     import session.implicits._
     gridBasedMat = new BlockMatrix(session.createDataset(blocks).repartition(numPartitions), rowPerPart, colPerPart)
+    ()
   }
 
   test("size") {
@@ -46,8 +48,8 @@ class BlockMatrixSuite extends RecommendationTestBase {
     val part0 = GridPartitioner(4, 7, suggestedNumPartitions = 12)
     // scalastyle:off
     val expected0 = Array(
-      Array(0, 0, 4, 4,  8,  8, 12),
-      Array(1, 1, 5, 5,  9,  9, 13),
+      Array(0, 0, 4, 4, 8, 8, 12),
+      Array(1, 1, 5, 5, 9, 9, 13),
       Array(2, 2, 6, 6, 10, 10, 14),
       Array(3, 3, 7, 7, 11, 11, 15))
     // scalastyle:on
@@ -252,7 +254,8 @@ class BlockMatrixSuite extends RecommendationTestBase {
     }
     // subtracting BlockMatrices composed of SparseMatrices
     val sparseBlocks: Seq[((Int, Int), Matrix)] = for (i <- 0 until 4) yield ((i / 2, i % 2), SparseMatrix.speye(4))
-    val denseBlocks: immutable.Seq[((Int, Int), Matrix)] = for (i <- 0 until 4) yield ((i / 2, i % 2), DenseMatrix.eye(4))
+    val denseBlocks: immutable.Seq[((Int, Int), Matrix)] = for (i <- 0 until 4) yield ((i / 2, i % 2), DenseMatrix
+      .eye(4))
     val sparseBM = new BlockMatrix(sc.makeRDD(sparseBlocks, 4).toDS(), 4, 4, 8, 8)
     val denseBM = new BlockMatrix(sc.makeRDD(denseBlocks, 4).toDS(), 4, 4, 8, 8)
 
@@ -266,7 +269,7 @@ class BlockMatrixSuite extends RecommendationTestBase {
     assert(C.numRows() === A.numRows())
     assert(C.numCols() === B.numCols())
     ()
-//    assert(localC ~== expectedResult absTol 1e-8)
+    //    assert(localC ~== expectedResult absTol 1e-8)
   }
 
   test("multiply") {
@@ -284,23 +287,25 @@ class BlockMatrixSuite extends RecommendationTestBase {
       (0.0, 1.0, 2.0, 1.0),
       (0.0, 0.0, 1.0, 5.0))
 
-    val AtimesB = gridBasedMat.multiply(B)
+    val AtimesB = gridBasedMat.multiply(B, rdd = false)
     assert(AtimesB.numRows() === m)
     assert(AtimesB.numCols() === n)
     assert(AtimesB.toBreeze() === expected)
     val C = new BlockMatrix(rdd, rowPerPart, colPerPart, m + 1, n) // dimensions don't match
     intercept[IllegalArgumentException] {
-      gridBasedMat.multiply(C)
+      gridBasedMat.multiply(C, rdd = false)
     }
     val largerBlocks: Seq[((Int, Int), Matrix)] = Seq(((0, 0), DenseMatrix.eye(4)))
     val C2 = new BlockMatrix(sc.parallelize(largerBlocks, numPartitions).toDS(), 4, 4)
     intercept[SparkException] {
       // partitioning doesn't match
-      gridBasedMat.multiply(C2)
+      gridBasedMat.multiply(C2, rdd = false)
     }
     val rand = new ju.Random(42)
-    val largerAblocks: immutable.Seq[((Int, Int), Matrix)] = for (i <- 0 until 20) yield ((i % 5, i / 5), DenseMatrix.rand(6, 4, rand))
-    val largerBblocks: Seq[((Int, Int), Matrix)] = for (i <- 0 until 16) yield ((i % 4, i / 4), DenseMatrix.rand(4, 4, rand))
+    val largerAblocks: immutable.Seq[((Int, Int), Matrix)] = for (i <- 0 until 20) yield ((i % 5, i / 5), DenseMatrix
+      .rand(6, 4, rand))
+    val largerBblocks: Seq[((Int, Int), Matrix)] = for (i <- 0 until 16) yield ((i % 4, i / 4), DenseMatrix.rand(4,
+      4, rand))
 
     // Try it with increased number of partitions
     val largeA = new BlockMatrix(sc.parallelize(largerAblocks, 10).toDS(), 6, 4)

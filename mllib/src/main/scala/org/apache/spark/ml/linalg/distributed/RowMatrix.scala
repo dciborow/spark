@@ -6,13 +6,18 @@ package org.apache.spark.ml.linalg.distributed
 import org.apache.spark.ml.linalg.Vector
 import org.apache.spark.sql.Dataset
 
+case class RowVector(vector: Vector) {
+  def size: Int = vector.size
+}
+
 class RowMatrix(
-               val rows: Dataset[Vector],
-               private var nRows: Long,
-               private var nCols: Int) extends DistributedMatrix {
+                 val rows: Dataset[RowVector],
+                 private var nRows: Long,
+                 private var nCols: Int) extends DistributedMatrix {
+  //  def toBreeze() = ???
 
   /** Alternative constructor leaving matrix dimensions to be determined automatically. */
-  def this(rows: Dataset[Vector]) = this(rows, 0L, 0)
+  def this(rows: Dataset[RowVector]) = this(rows, 0L, 0)
 
   /** Gets or computes the number of columns. */
   override def numCols(): Long = {
