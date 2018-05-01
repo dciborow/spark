@@ -13,7 +13,7 @@ import org.apache.spark.rdd.RDD
 /**
   * Represents a row of [[org.apache.spark.mllib.linalg.distributed.IndexedColMatrix]].
   */
-@Since("1.0.0")
+@Since("2.4.0")
 case class IndexedCol(index: Long, vector: Vector)
 
 /**
@@ -26,17 +26,17 @@ case class IndexedCol(index: Long, vector: Vector)
   * @param nCols number of columns. A non-positive value means unknown, and then the number of
   *              columns will be determined by the size of the first row.
   */
-@Since("1.0.0")
-class IndexedColMatrix @Since("1.0.0")(
-  @Since("1.0.0") val rows: RDD[IndexedCol],
+@Since("2.4.0")
+class IndexedColMatrix @Since("2.4.0")(
+  @Since("2.4.0") val rows: RDD[IndexedCol],
   private var nRows: Long,
   private var nCols: Int) extends DistributedMatrix {
 
   /** Alternative constructor leaving matrix dimensions to be determined automatically. */
-  @Since("1.0.0")
+  @Since("2.4.0")
   def this(rows: RDD[IndexedCol]) = this(rows, 0L, 0)
 
-  @Since("1.0.0")
+  @Since("2.4.0")
   override def numCols(): Long = {
     if (nCols <= 0) {
       // Calling `first` will throw an exception if `rows` is empty.
@@ -45,7 +45,7 @@ class IndexedColMatrix @Since("1.0.0")(
     nCols.toLong
   }
 
-  @Since("1.0.0")
+  @Since("2.4.0")
   override def numRows(): Long = {
     if (nRows <= 0L) {
       // Reduce will throw an exception if `rows` is empty.
@@ -61,7 +61,7 @@ class IndexedColMatrix @Since("1.0.0")(
     * @return An n x n sparse upper-triangular matrix of cosine similarities between
     *         columns of this matrix.
     */
-  @Since("1.6.0")
+  @Since("2.4.0")
   def columnSimilarities(): CoordinateMatrix = {
     toRowMatrix().columnSimilarities()
   }
@@ -70,7 +70,7 @@ class IndexedColMatrix @Since("1.0.0")(
     * Drops row indices and converts this matrix to a
     * [[org.apache.spark.mllib.linalg.distributed.RowMatrix]].
     */
-  @Since("1.0.0")
+  @Since("2.4.0")
   def toRowMatrix(): RowMatrix = {
     new RowMatrix(rows.map(_.vector), 0L, nCols)
   }
@@ -78,7 +78,7 @@ class IndexedColMatrix @Since("1.0.0")(
   /**
     * Converts to BlockMatrix. Creates blocks with size 1024 x 1024.
     */
-  @Since("1.3.0")
+  @Since("2.4.0")
   def toBlockMatrix(): BlockMatrix = {
     toBlockMatrix(1024, 1024)
   }
@@ -92,7 +92,7 @@ class IndexedColMatrix @Since("1.0.0")(
     *                     a smaller value. Must be an integer value greater than 0.
     * @return a [[BlockMatrix]]
     */
-  @Since("1.3.0")
+  @Since("2.4.0")
   def toBlockMatrix(rowsPerBlock: Int, colsPerBlock: Int): BlockMatrix = {
     require(rowsPerBlock > 0,
       s"rowsPerBlock needs to be greater than 0. rowsPerBlock: $rowsPerBlock")
@@ -164,7 +164,7 @@ class IndexedColMatrix @Since("1.0.0")(
     * Converts this matrix to a
     * [[org.apache.spark.mllib.linalg.distributed.CoordinateMatrix]].
     */
-  @Since("1.3.0")
+  @Since("2.4.0")
   def toCoordinateMatrix(): CoordinateMatrix = {
     val entries = rows.flatMap { row =>
       val rowIndex = row.index
@@ -201,7 +201,7 @@ class IndexedColMatrix @Since("1.0.0")(
     *                 are treated as zero, where sigma(0) is the largest singular value.
     * @return SingularValueDecomposition(U, s, V)
     */
-  @Since("1.0.0")
+  @Since("2.4.0")
   def computeSVD(
     k: Int,
     computeU: Boolean = false,
@@ -228,7 +228,7 @@ class IndexedColMatrix @Since("1.0.0")(
     * @param B a local matrix whose number of rows must match the number of columns of this matrix
     * @return an IndexedColMatrix representing the product, which preserves partitioning
     */
-  @Since("1.0.0")
+  @Since("2.4.0")
   def multiply(B: Matrix): IndexedColMatrix = {
     val mat = toRowMatrix().multiply(B)
     val IndexedCols = rows.map(_.index).zip(mat.rows).map { case (i, v) =>
@@ -242,7 +242,7 @@ class IndexedColMatrix @Since("1.0.0")(
     *
     * @note This cannot be computed on matrices with more than 65535 columns.
     */
-  @Since("1.0.0")
+  @Since("2.4.0")
   def computeGramianMatrix(): Matrix = {
     toRowMatrix().computeGramianMatrix()
   }
